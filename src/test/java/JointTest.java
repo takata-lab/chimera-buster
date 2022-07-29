@@ -17,6 +17,7 @@ public class JointTest {
             args[2] = "--bam";
             args[3] = bamPath;
             // run main()
+            System.err.println("Main Test");
             Main.main(args);
         }catch(Exception e){
             e.printStackTrace();

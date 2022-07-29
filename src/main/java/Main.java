@@ -1,3 +1,4 @@
+import java.io.File;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.FileInputStream;
@@ -8,14 +9,32 @@ import java.util.ArrayList;
 import htsjdk.samtools.util.IntervalList;
 import htsjdk.samtools.util.Interval;
 import htsjdk.samtools.util.SamLocusIterator;
+import htsjdk.samtools.SamReader;
+import htsjdk.samtools.SamReaderFactory;
 
 
 public class Main {
     public static void analyseVCF(ArrayList<VCFEntry> vcf, String bamPath) throws IOException{
         SamLocusIterator locus = null;
+        final SamReader reader = SamReaderFactory.makeDefault().open(new File(bamPath));
+
         for(VCFEntry snp: vcf){
             // TODO: validate snp
+            System.err.println(snp.chrom + ":" + snp.pos + " " + snp.ref + " -> " + snp.alt);
+            IntervalList region = createTargetRegionInterval(reader, snp);
+            locus = new SamLocusIterator(reader, region);
+
         }
+    }
+    private static IntervalList createTargetRegionInterval(SamReader reader, VCFEntry snp){
+        IntervalList list = new IntervalList(reader.getFileHeader());
+        int start = snp.pos - 10;
+        int end = snp.pos + 10;
+        
+        Interval interval = new Interval(snp.chrom, start, end);
+        list.add(interval);
+
+        return list;
     }
     public static void main(String[] argv){
         String vcfPath = null;
