@@ -11,11 +11,13 @@ public class JointTest {
         try {
             String vcfPath = "../test_data/ML-BA001.Maryland_DES_wave1.hg38.BQSR.merge.markdup.tagfix.mutect.GENCODEv32_RefSeq.slop100.PASS.allannotation.vcf.gz";
             String bamPath = "../test_data/ML-BA001.Maryland_DES_wave1.hg38.BQSR.merge.markdup.tagfix.mutect.GENCODEv32_RefSeq.slop100.PASS.slop300.bamout.bam";
-            String[] args = new String[4];
+            String[] args = new String[6];
             args[0] = "--vcf";
             args[1] = vcfPath;
             args[2] = "--bam";
             args[3] = bamPath;
+            args[4] = "--ref";
+            args[5] = "/disk1/2020_digenome_seek_july/Homo_sapiens.GRCh38.dna_sm.primary_assembly_fix.fa";
             // run main()
             System.err.println("Main Test");
             Main.main(args);

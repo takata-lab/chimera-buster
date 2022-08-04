@@ -4,6 +4,8 @@ import java.io.InputStreamReader;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.FileNotFoundException;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.zip.GZIPInputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,16 +28,17 @@ public class Main {
         ReferenceSequence seq = refGenome.getSubsequenceAt(chrom, pos, pos);
         return seq.getBaseString().charAt(0);
     }
-    private static List<SamLocusIterator.RecordAndOffset> collectAltAlignment(List<SamLocusIterator.RecordAndOffset> src, String ref, String alt){
-        ArrayList<SamLocusIterator.RecordAndOffset> result = new ArrayList<>();
+    private static void classifyAlignment(List<SamLocusIterator.RecordAndOffset> src, String refBase, String altBase, HashMap<String, SamLocusIterator.RecordAndOffset> refs, HashMap<String, SamLocusIterator.RecordAndOffset> alts){
         for(SamLocusIterator.RecordAndOffset alignment: src){
             SAMRecord rec = alignment.getRecord();
-            if(alignment.getReadBase() == alt.charAt(0)){
-                result.add(alignment);
+            if(alignment.getReadBase() == altBase.charAt(0)){
+                alts.put(rec.getReadName(), alignment);
+            }else if(alignment.getReadBase() == refBase.charAt(0)){
+                refs.put(rec.getReadName(), alignment);
             }
         }
-        return result;
     }
+    /*
     private static List<SamLocusIterator.RecordAndOffset> collectNonRefAlignment(List<SamLocusIterator.RecordAndOffset> src, String ref, String alt){
         ArrayList<SamLocusIterator.RecordAndOffset> result = new ArrayList<>();
         for(SamLocusIterator.RecordAndOffset alignment: src){
@@ -45,7 +48,7 @@ public class Main {
             }
         }
         return result;
-    }
+    }*/
     // filer out ArtificialHaplotypeRG ReadGroup created by GATK
     private static List<SamLocusIterator.RecordAndOffset> filterAlignment(List<SamLocusIterator.RecordAndOffset> src){
         ArrayList<SamLocusIterator.RecordAndOffset> result = new ArrayList<>();
@@ -60,39 +63,102 @@ public class Main {
         }
         return result;
     }
-    public static void analyseVCF(ArrayList<VCFEntry> vcf, String bamPath) throws IOException{
-        SamLocusIterator locus = null;
-        final SamReader reader = SamReaderFactory.makeDefault().open(new File(bamPath));
+    private static String calcScore(Object[] ref, Object[] alt){
+        HashMap<String, SamLocusIterator.RecordAndOffset> ref1 = (HashMap<String, SamLocusIterator.RecordAndOffset>)ref[0];
+        HashMap<String, SamLocusIterator.RecordAndOffset> ref2 = (HashMap<String, SamLocusIterator.RecordAndOffset>)ref[1];
+        HashMap<String, SamLocusIterator.RecordAndOffset> alt1 = (HashMap<String, SamLocusIterator.RecordAndOffset>)alt[0];
+        HashMap<String, SamLocusIterator.RecordAndOffset> alt2 = (HashMap<String, SamLocusIterator.RecordAndOffset>)alt[1];
+        // filter uncommon reads: remove reads not covering both position
+        HashSet<String> exclude = new HashSet<>();
+        for(String name: alt1.keySet()){
+            if(!ref2.containsKey(name) && !alt2.containsKey(name)){
+                exclude.add(name);
+            }
+        }
+        for(String name: alt2.keySet()){
+            if(!ref1.containsKey(name) && !alt1.containsKey(name)){
+                exclude.add(name);
+            }
+        }
+        for(String name: exclude){
+            alt1.remove(name);
+            alt2.remove(name);
+        }
+        // forward
+        int hit1 = 0;
+        int hit2 = 0;
+        for(String name: alt1.keySet()){
+            if(alt2.containsKey(name)){
+                hit1++;
+            }
+        }
+        for(String name: alt2.keySet()){
+            if(alt1.containsKey(name)){
+                hit2++;
+            }
+        }
+        double rate1 = ((double)hit1)/alt1.size();
+        double rate2 = ((double)hit2)/alt2.size();
 
-        for(VCFEntry snp: vcf){
-            // TODO: validate snp
-            System.err.println(snp.chrom + ":" + snp.pos + " " + snp.ref + " -> " + snp.alt);
+        String result = join("Forward=", String.valueOf(hit1), "/", String.valueOf(alt1.size()), ":", String.valueOf(rate1));
+        result = join(result, ";Reverse=", String.valueOf(hit2), "/", String.valueOf(alt2.size()), ":", String.valueOf(rate2));
+        return result;
+    }
+    public static String analyzeSNPPair(VCFEntry[] snps, SamReader reader){
+        // classify ref reads and alt reads
+        Object[] ref = new Object[2];
+        Object[] alt = new Object[2];
+        for(int i = 0; i<2; i++){
+            ref[i] = new HashMap<String, SamLocusIterator.RecordAndOffset>();
+            alt[i] = new HashMap<String, SamLocusIterator.RecordAndOffset>();
+            VCFEntry snp = snps[i];
             IntervalList region = createTargetRegionInterval(reader, snp);
-            locus = new SamLocusIterator(reader, region);
-            System.err.println("checking "+ snp.chrom + ":" + snp.pos);
+            SamLocusIterator locus = new SamLocusIterator(reader, region);
             while(locus.hasNext()){
                 AbstractLocusInfo cur = locus.next();
                 List<SamLocusIterator.RecordAndOffset> alignments = filterAlignment(cur.getRecordAndOffsets());
                 // System.err.println("pos: " + cur.getSequenceName() + ":" + cur.getPosition() + " " + (snp.pos == cur.getPosition()));
+                // System.err.print("   " + cur.getSequenceName() + " " + cur.getPosition());
                 if(cur.getPosition() == snp.pos){
-                    List<SamLocusIterator.RecordAndOffset> alts = collectAltAlignment(alignments, snp.ref, snp.alt);
-                }else {
-                    byte refBase = (byte)getRefBase(snp.chrom, snp.pos);
-                    List<SamLocusIterator.RecordAndOffset> alts = collectAltAlignment(alignments, snp.ref, snp.alt);
+                    classifyAlignment(alignments, snp.ref, snp.alt, (HashMap<String, SamLocusIterator.RecordAndOffset>) ref[i], (HashMap<String, SamLocusIterator.RecordAndOffset>) alt[i]);
                 }
             }
             locus.close();
         }
+        return calcScore(ref, alt);
+    }
+    public static void analyseVCF(ArrayList<VCFEntry> vcf, String bamPath) throws IOException{
+        final SamReader reader = SamReaderFactory.makeDefault().open(new File(bamPath));
+
+        VCFEntry prev = null;
+        for(VCFEntry snp: vcf){
+            System.err.println(snp.chrom + ":" + snp.pos + " " + snp.ref + " -> " + snp.alt);
+            if(prev != null && (snp.pos - prev.pos) < 10){
+                System.err.println("checking "+ snp.chrom + ":" + snp.pos);
+                VCFEntry[] pair = {prev, snp};
+                String scores = analyzeSNPPair(pair, reader);
+                snp.appendInfo(scores);
+            }
+            prev = snp;
+            System.out.println(snp.toString());
+        }
     }
     private static IntervalList createTargetRegionInterval(SamReader reader, VCFEntry snp){
         IntervalList list = new IntervalList(reader.getFileHeader());
-        int start = snp.pos - 10;
-        int end = snp.pos + 10;
+        int start = snp.pos;
+        int end = snp.pos;
         
         Interval interval = new Interval(snp.chrom, start, end);
         list.add(interval);
 
         return list;
+    }
+    public static String join(String... list){
+        StringBuilder buf = new StringBuilder(list[0]);
+        for(int i = 1; i<list.length; i++){
+            buf.append(list[i]);
+        }
+        return buf.toString();
     }
     public static void main(String[] argv){
         String vcfPath = null;
