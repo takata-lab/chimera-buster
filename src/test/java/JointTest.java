@@ -17,7 +17,7 @@ public class JointTest {
             args[2] = "--bam";
             args[3] = bamPath;
             args[4] = "--ref";
-            args[5] = "/disk1/2020_digenome_seek_july/Homo_sapiens.GRCh38.dna_sm.primary_assembly_fix.fa";
+            args[5] = "../test_data/Homo_sapiens.GRCh38.dna_sm.primary_assembly_fix.fa";
             // run main()
             System.err.println("Main Test");
             Main.main(args);
