@@ -1,6 +1,4 @@
-import java.util.zip.GZIPInputStream;
-import java.io.*;
-import java.util.*;
+import java.util.LinkedHashMap;
 
 public class VCFEntry {
     String chrom;

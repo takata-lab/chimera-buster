@@ -1,54 +1,74 @@
-import java.io.File;
 import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.io.File;
 import java.io.FileInputStream;
-import java.io.IOException;
 import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.zip.GZIPInputStream;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.zip.GZIPInputStream;
 
-import htsjdk.samtools.util.IntervalList;
-import htsjdk.samtools.util.Interval;
-import htsjdk.samtools.util.SamLocusIterator;
-import htsjdk.samtools.util.AbstractLocusInfo;
-import htsjdk.samtools.SamReader;
 import htsjdk.samtools.SAMRecord;
+import htsjdk.samtools.SamReader;
 import htsjdk.samtools.SamReaderFactory;
-
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
 import htsjdk.samtools.reference.ReferenceSequence;
+import htsjdk.samtools.util.AbstractLocusInfo;
+import htsjdk.samtools.util.Interval;
+import htsjdk.samtools.util.IntervalList;
+import htsjdk.samtools.util.SamLocusIterator;
 
 
 public class Main {
     static IndexedFastaSequenceFile refGenome;
-    private static char getRefBase(String chrom, int pos){
-        ReferenceSequence seq = refGenome.getSubsequenceAt(chrom, pos, pos);
-        return seq.getBaseString().charAt(0);
+    private static String getRefBases(String chrom, long start, long end){
+        ReferenceSequence seq = refGenome.getSubsequenceAt(chrom, start, end);
+        return seq.getBaseString();
     }
-    private static void classifyAlignment(List<SamLocusIterator.RecordAndOffset> src, String refBase, String altBase, HashMap<String, SamLocusIterator.RecordAndOffset> refs, HashMap<String, SamLocusIterator.RecordAndOffset> alts){
+    private static boolean hasSnpBetween(SAMRecord rec, long ref_start, long ref_end){
+        int qstart = rec.getReadPositionAtReferencePosition((int) ref_start) - 1;
+        int qend = rec.getReadPositionAtReferencePosition((int) ref_end) - 1;
+        // System.err.println("checking ref["+ ref_start + "," + ref_end + "], read[" + qstart + "," + qend + "]");
+        String refBases = getRefBases(rec.getContig(), ref_start, ref_end-1);
+        String refBases2 = getRefBases(rec.getContig(), ref_start, ref_end+3);
+        if(qstart == 0 || qend == 0){
+            // read not covering snp region
+            return false;
+        }
+        String readBases = "";
+        String readBases2 = "";
+        try {
+            readBases = rec.getReadString().substring(qstart, qend);
+            readBases2 = rec.getReadString().substring(qstart, qend+4);
+        }catch(java.lang.StringIndexOutOfBoundsException e){
+            // out of read ends
+        }
+        // System.err.println("  " + refBases + " -> " + readBases);
+        // System.err.println("  ( " + refBases2 + " ) ");
+        // System.err.println("  ( " + readBases2 + " ) ");
+        return !refBases.equals(readBases);
+    }
+    private static void classifyAlignment(List<SamLocusIterator.RecordAndOffset> src, long refpos, String vcfRefBase, String vcfAltBase, HashMap<String, SamLocusIterator.RecordAndOffset> refs, HashMap<String, SamLocusIterator.RecordAndOffset> alts){
+        int snp_count = 0;
+        int ref_count = 0;
         for(SamLocusIterator.RecordAndOffset alignment: src){
             SAMRecord rec = alignment.getRecord();
-            if(alignment.getReadBase() == altBase.charAt(0)){
+            int offset = alignment.getOffset();
+            // use a longer length for comparison
+            // System.err.println("checking: " + vcfRefBase + "->" + vcfAltBase);
+            int span = (vcfRefBase.length() > vcfAltBase.length())? vcfRefBase.length(): vcfAltBase.length();
+            if(hasSnpBetween(rec, refpos, refpos+span)){
+                snp_count++;
                 alts.put(rec.getReadName(), alignment);
-            }else if(alignment.getReadBase() == refBase.charAt(0)){
+            }else{
                 refs.put(rec.getReadName(), alignment);
+                ref_count++;
             }
         }
+        System.err.println("total " + alts.size() + " alt reads, " + snp_count + " snps, " + ref_count + " refs");
     }
-    /*
-    private static List<SamLocusIterator.RecordAndOffset> collectNonRefAlignment(List<SamLocusIterator.RecordAndOffset> src, String ref, String alt){
-        ArrayList<SamLocusIterator.RecordAndOffset> result = new ArrayList<>();
-        for(SamLocusIterator.RecordAndOffset alignment: src){
-            SAMRecord rec = alignment.getRecord();
-            if(alignment.getReadBase() != ref.charAt(0)){
-                result.add(alignment);
-            }
-        }
-        return result;
-    }*/
     // filer out ArtificialHaplotypeRG ReadGroup created by GATK
     private static List<SamLocusIterator.RecordAndOffset> filterAlignment(List<SamLocusIterator.RecordAndOffset> src){
         ArrayList<SamLocusIterator.RecordAndOffset> result = new ArrayList<>();
@@ -120,7 +140,7 @@ public class Main {
                 // System.err.println("pos: " + cur.getSequenceName() + ":" + cur.getPosition() + " " + (snp.pos == cur.getPosition()));
                 // System.err.print("   " + cur.getSequenceName() + " " + cur.getPosition());
                 if(cur.getPosition() == snp.pos){
-                    classifyAlignment(alignments, snp.ref, snp.alt, (HashMap<String, SamLocusIterator.RecordAndOffset>) ref[i], (HashMap<String, SamLocusIterator.RecordAndOffset>) alt[i]);
+                    classifyAlignment(alignments, cur.getPosition(), snp.ref, snp.alt, (HashMap<String, SamLocusIterator.RecordAndOffset>) ref[i], (HashMap<String, SamLocusIterator.RecordAndOffset>) alt[i]);
                 }
             }
             locus.close();
