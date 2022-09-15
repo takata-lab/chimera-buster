@@ -17,6 +17,9 @@ import htsjdk.samtools.util.AbstractLocusInfo;
 import htsjdk.samtools.SamReader;
 import htsjdk.samtools.SAMRecord;
 import htsjdk.samtools.SamReaderFactory;
+import htsjdk.samtools.filter.SamRecordFilter;
+import htsjdk.samtools.filter.SecondaryAlignmentFilter;
+import htsjdk.samtools.filter.DuplicateReadFilter;
 import htsjdk.samtools.CigarOperator;
 
 import htsjdk.samtools.reference.IndexedFastaSequenceFile;
@@ -25,18 +28,39 @@ import htsjdk.samtools.reference.ReferenceSequence;
 
 public class Main2 {
     static IndexedFastaSequenceFile refGenome;
+    static boolean debug = false; // 83520057
     private static char getRefBase(String chrom, int pos){
         ReferenceSequence seq = refGenome.getSubsequenceAt(chrom, pos, pos);
         return seq.getBaseString().charAt(0);
     }
     private static void classifyAlignment(List<SamLocusIterator.RecordAndOffset> src, String refBase, String altBase, HashMap<String, SamLocusIterator.RecordAndOffset> refs, HashMap<String, SamLocusIterator.RecordAndOffset> alts){
+        int total = 0;
+        int alt = 0;
+        int ref = 0;
+        int suppl = 0;
         for(SamLocusIterator.RecordAndOffset alignment: src){
+            total++;
+            if(alignment.getRecord().isSecondaryOrSupplementary()){
+            // if(alignment.getRecord().getSupplementaryAlignmentFlag()){
+                suppl++;
+                System.err.println("suppl:" + alignment.getRecord().getReadName() + " " + alignment.getReadBase());
+            }
             SAMRecord rec = alignment.getRecord();
             if(alignment.getReadBase() == altBase.charAt(0)){
                 alts.put(rec.getReadName(), alignment);
+                alt++;
             }else if(alignment.getReadBase() == refBase.charAt(0)){
                 refs.put(rec.getReadName(), alignment);
+                ref++;
             }
+        }
+        if(debug){
+            System.err.println("refbase: " + refBase);
+            System.err.println("altbase: " + altBase);
+            System.err.println("total: " + total);
+            System.err.println("ref: " + ref);
+            System.err.println("alt: " + alt);
+            System.err.println("suppl: " + suppl);
         }
     }
     /*
@@ -94,13 +118,27 @@ public class Main2 {
 
         IntervalList region = createTargetRegionInterval(reader, snp);
         SamLocusIterator locus = new SamLocusIterator(reader, region);
+        final List<SamRecordFilter> filters = java.util.Arrays.asList(new SecondaryAlignmentFilter());
+        // final List<SamRecordFilter> filters = java.util.Arrays.asList(new SecondaryAlignmentFilter(), new DuplicateReadFilter());
+        // locus.setSamFilters(filters);
+        locus.setIncludeNonPfReads(true);
+        locus.setEmitUncoveredLoci(true);
+        locus.setIncludeIndels(true);
+        locus.setSamFilters(null);
         while(locus.hasNext()){
             AbstractLocusInfo cur = locus.next();
             List<SamLocusIterator.RecordAndOffset> alignments = cur.getRecordAndOffsets();
             // System.err.println("pos: " + cur.getSequenceName() + ":" + cur.getPosition() + " " + (snp.pos == cur.getPosition()));
             // System.err.print("   " + cur.getSequenceName() + " " + cur.getPosition());
             if(cur.getPosition() == snp.pos){
+                if(snp.chrom.equals("chr5") && snp.pos > 83520050){
+                    debug = true;
+                }
                 classifyAlignment(alignments, snp.ref, snp.alt, (HashMap<String, SamLocusIterator.RecordAndOffset>) ref, (HashMap<String, SamLocusIterator.RecordAndOffset>) alt);
+                if(snp.chrom.equals("chr5") && debug && snp.pos > 83520062){
+                    System.exit(0);
+                }
+                debug = false;
             }
         }
         locus.close();
