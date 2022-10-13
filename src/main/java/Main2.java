@@ -16,6 +16,7 @@ import htsjdk.samtools.util.SamLocusIterator;
 import htsjdk.samtools.util.AbstractLocusInfo;
 import htsjdk.samtools.SamReader;
 import htsjdk.samtools.SAMRecord;
+import htsjdk.samtools.Cigar;
 import htsjdk.samtools.SamReaderFactory;
 import htsjdk.samtools.filter.SamRecordFilter;
 import htsjdk.samtools.filter.SecondaryAlignmentFilter;
@@ -33,35 +34,116 @@ public class Main2 {
         ReferenceSequence seq = refGenome.getSubsequenceAt(chrom, pos, pos);
         return seq.getBaseString().charAt(0);
     }
-    private static void classifyAlignment(List<SamLocusIterator.RecordAndOffset> src, String refBase, String altBase, HashMap<String, SamLocusIterator.RecordAndOffset> refs, HashMap<String, SamLocusIterator.RecordAndOffset> alts){
+    public static class ChimeraInfo {
+        int alts;
+        int refs;
+        int chimeras;
+        int alt_and_chimera;
+        int unknown;
+        public ChimeraInfo(int r, int a, int c, int ac, int u){
+            alts = a;
+            refs = r;
+            chimeras = c;
+            alt_and_chimera = ac;
+            unknown = u;
+        }
+    }
+    private static boolean isSecondaryOrSupplementary(SAMRecord r){
+        if(r.isSecondaryOrSupplementary()){
+            return true;
+        }
+        Cigar cigar = r.getCigar();
+        if(cigar.getFirstCigarElement().getOperator().isClipping() || cigar.getLastCigarElement().getOperator().isClipping()){
+            return true;
+        }
+        return false;
+    }
+    private static String getReadName(SAMRecord r){
+      try {
+        boolean isFirst = r.getFirstOfPairFlag();
+        if(isFirst){
+            return r.getReadName() + "_1";
+        }
+      }catch(java.lang.IllegalStateException e){
+          System.err.println("uncertain read: " + r.getReadName());
+          return r.getReadName() + "_0";
+      }
+        return r.getReadName() + "_2";
+    }
+    private static ChimeraInfo classifyAlignment(List<SamLocusIterator.RecordAndOffset> src, String refBase, String altBase, HashMap<String, SamLocusIterator.RecordAndOffset> refs, HashMap<String, SamLocusIterator.RecordAndOffset> alts, int snpPos, int pos, HashSet<String> chimeras){
         int total = 0;
-        int alt = 0;
-        int ref = 0;
-        int suppl = 0;
+        int unknown = 0;
+        HashSet<String> alt_chimera = new HashSet<>();
         for(SamLocusIterator.RecordAndOffset alignment: src){
             total++;
-            if(alignment.getRecord().isSecondaryOrSupplementary()){
-            // if(alignment.getRecord().getSupplementaryAlignmentFlag()){
-                suppl++;
-                System.err.println("suppl:" + alignment.getRecord().getReadName() + " " + alignment.getReadBase());
-            }
             SAMRecord rec = alignment.getRecord();
-            if(alignment.getReadBase() == altBase.charAt(0)){
-                alts.put(rec.getReadName(), alignment);
-                alt++;
-            }else if(alignment.getReadBase() == refBase.charAt(0)){
-                refs.put(rec.getReadName(), alignment);
-                ref++;
+            if(isSecondaryOrSupplementary(rec)){
+            // if(alignment.getRecord().getSupplementaryAlignmentFlag()){
+                chimeras.add(rec.getReadName());
+        //        System.err.println("chimera:" + alignment.getRecord().getReadName() + " [" + ((char)alignment.getReadBase()) + "] " + rec.getCigarString() + " " + rec.getFlags());
+            }
+        //  if(rec.getReadName().equals("A00120:278:HHFTVDSX3:2:2304:11939:16689")){
+        //      System.err.println("###A00120:278:HHFTVDSX3:2:2304:11939:16689 [" + ((char)alignment.getReadBase()) + "] sec_supp:" + rec.isSecondaryOrSupplementary() + " read2: " + rec.getSecondOfPairFlag()  + " strand:" + (!rec.getReadNegativeStrandFlag()) + " cigar:" + rec.getCigarString() 
+        //          + " offset:" + alignment.getOffset());
+        //      System.err.println("    getReferencePositionAtReadPosition: " + rec.getReferencePositionAtReadPosition(22));
+        //      System.err.println("    getReferencePositionAtReadPosition: " + rec.getReferencePositionAtReadPosition(21));
+        //      System.err.println("    getReadString(): " + rec.getReadString().charAt(alignment.getOffset()-1));
+        //      System.err.println("    getReadString(): " + rec.getReadString().charAt(alignment.getOffset()));
+        //  }
+            String bases = rec.getReadString();
+            int beginIndex = alignment.getOffset() + (snpPos - pos);
+            int endIndex = beginIndex + altBase.length();
+            if(endIndex > bases.length()){
+                endIndex = bases.length();
+            }
+        //  System.err.println("altBase: " + altBase);
+        //  System.err.println("refBase: " + altBase);
+        //  if(alignment.getOffset() + (snpPos - pos) >= 0){
+        //      System.err.println("read: " + bases.substring(beginIndex, endIndex));
+        //  }
+            if(alignment.getOffset() + (snpPos - pos) >= 0 && bases.substring(beginIndex, endIndex).equals(altBase)){
+                refs.remove(getReadName(rec));
+                System.err.println("alt");
+                alts.put(getReadName(rec), alignment);
+            }else if(alignment.getOffset() + (snpPos - pos) >= 0 && bases.substring(beginIndex, endIndex).equals(refBase)){
+                alts.remove(getReadName(rec));
+                refs.put(getReadName(rec), alignment);
+            }else {
+                unknown++;
+            }
+        }
+        for(SamLocusIterator.RecordAndOffset alignment: src){
+            SAMRecord rec = alignment.getRecord();
+            String bases = rec.getReadString();
+            int beginIndex = alignment.getOffset() + (snpPos - pos);
+            int endIndex = beginIndex + altBase.length();
+            if(endIndex > bases.length()){
+                endIndex = bases.length();
+            }
+            if(isSecondaryOrSupplementary(rec) && chimeras.contains(rec.getReadName()) && alts.containsKey(getReadName(rec))){
+                System.err.println("#chimera");
+                alt_chimera.add(getReadName(rec));
+        //  }else if(!isSecondaryOrSupplementary(rec) && alignment.getOffset() + (snpPos - pos) >= 0 && bases.substring(beginIndex, endIndex).equals(altBase)){
+        //      if(pos > 52897350 && pos < 52897364){
+        //          System.err.println("Non chimeria alt read: " + getReadName(rec));
+        //      }
+            }else {
+                System.err.println("---");
+                System.err.println("secondary: "+ isSecondaryOrSupplementary(rec));
+                System.err.println("chimera: "+ chimeras.contains(rec.getReadName()));
+                System.err.println("alts.containsKey: "+ alts.containsKey(getReadName(rec)));
             }
         }
         if(debug){
             System.err.println("refbase: " + refBase);
             System.err.println("altbase: " + altBase);
             System.err.println("total: " + total);
-            System.err.println("ref: " + ref);
-            System.err.println("alt: " + alt);
-            System.err.println("suppl: " + suppl);
+            System.err.println("ref: " + refs.size());
+            System.err.println("alt: " + alts.size());
+            System.err.println("chimera: " + chimeras.size());
+            System.err.println("alt_and_chimera: " + alt_chimera.size());
         }
+        return new ChimeraInfo(refs.size(), alts.size(), chimeras.size(), alt_chimera.size(), unknown);
     }
     /*
     private static List<SamLocusIterator.RecordAndOffset> collectNonRefAlignment(List<SamLocusIterator.RecordAndOffset> src, String ref, String alt){
@@ -89,6 +171,15 @@ public class Main2 {
         }
         return result;
     }*/
+    private static String calcScore(HashMap<String, SamLocusIterator.RecordAndOffset> ref, HashMap<String, SamLocusIterator.RecordAndOffset> alt, ChimeraInfo info){
+        int total = info.refs + info.alts + info.unknown;
+        float alt_rate = ((float)info.alts)/total;
+        String result = join("Alt=", String.valueOf(info.alts), "/", String.valueOf(total), ":", String.valueOf(alt_rate));
+        result = join(result, ";ChimeraAlt=", String.valueOf(info.alt_and_chimera), "/", String.valueOf(info.alts), ";ChimeraAlt_ratio=", String.valueOf(((float)info.alt_and_chimera)/(info.alts)));
+        result = join(result, ";StrictChimeraAlt=", String.valueOf(info.alt_and_chimera), "/", String.valueOf(info.alts+info.unknown), ";StrictChimeraAlt_ratio=", String.valueOf(((float)info.alt_and_chimera)/(info.alts+info.unknown)));
+        return result;
+    }
+    /*
     private static String calcScore(HashMap<String, SamLocusIterator.RecordAndOffset> ref, HashMap<String, SamLocusIterator.RecordAndOffset> alt){
         // filter uncommon reads: remove reads not covering both position
         int ref_count = ref.size();
@@ -110,11 +201,12 @@ public class Main2 {
         String result = join("SoftClips=", String.valueOf(alt_softclip_count), "/", String.valueOf(alt_count), ":", String.valueOf(rate_soft));
         result = join(result, ";HardClips=", String.valueOf(alt_hardclip_count), "/", String.valueOf(alt_count), ":", String.valueOf(rate_hard));
         return result;
-    }
+    }*/
     public static String analyzeSNP(VCFEntry snp, SamReader reader){
         // classify ref reads and alt reads
         HashMap<String, SamLocusIterator.RecordAndOffset> ref = new HashMap<String, SamLocusIterator.RecordAndOffset>();
         HashMap<String, SamLocusIterator.RecordAndOffset> alt = new HashMap<String, SamLocusIterator.RecordAndOffset>();
+        HashSet<String> chimeras = new HashSet<String>();
 
         IntervalList region = createTargetRegionInterval(reader, snp);
         SamLocusIterator locus = new SamLocusIterator(reader, region);
@@ -125,24 +217,25 @@ public class Main2 {
         locus.setEmitUncoveredLoci(true);
         locus.setIncludeIndels(true);
         locus.setSamFilters(null);
+        ChimeraInfo info = null;
         while(locus.hasNext()){
-            AbstractLocusInfo cur = locus.next();
+            SamLocusIterator.LocusInfo cur = (SamLocusIterator.LocusInfo)locus.next();
+            // AbstractLocusInfo cur = locus.next();
             List<SamLocusIterator.RecordAndOffset> alignments = cur.getRecordAndOffsets();
-            // System.err.println("pos: " + cur.getSequenceName() + ":" + cur.getPosition() + " " + (snp.pos == cur.getPosition()));
-            // System.err.print("   " + cur.getSequenceName() + " " + cur.getPosition());
-            if(cur.getPosition() == snp.pos){
+            if(cur.getPosition() > snp.pos){
                 if(snp.chrom.equals("chr5") && snp.pos > 83520050){
                     debug = true;
                 }
-                classifyAlignment(alignments, snp.ref, snp.alt, (HashMap<String, SamLocusIterator.RecordAndOffset>) ref, (HashMap<String, SamLocusIterator.RecordAndOffset>) alt);
+                info = classifyAlignment(alignments, snp.ref, snp.alt, (HashMap<String, SamLocusIterator.RecordAndOffset>) ref, (HashMap<String, SamLocusIterator.RecordAndOffset>) alt, snp.pos, cur.getPosition(), chimeras);
+                /*
                 if(snp.chrom.equals("chr5") && debug && snp.pos > 83520062){
                     System.exit(0);
-                }
+                }*/
                 debug = false;
             }
         }
         locus.close();
-        return calcScore(ref, alt);
+        return calcScore(ref, alt, info);
     }
     public static void analyseVCF(ArrayList<VCFEntry> vcf, String bamPath) throws IOException{
         final SamReader reader = SamReaderFactory.makeDefault().open(new File(bamPath));
@@ -157,8 +250,8 @@ public class Main2 {
     }
     private static IntervalList createTargetRegionInterval(SamReader reader, VCFEntry snp){
         IntervalList list = new IntervalList(reader.getFileHeader());
-        int start = snp.pos;
-        int end = snp.pos;
+        int start = snp.pos+1;
+        int end = snp.pos+1;
         
         Interval interval = new Interval(snp.chrom, start, end);
         list.add(interval);
