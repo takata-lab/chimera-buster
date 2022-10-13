@@ -192,7 +192,8 @@ public class Main {
                 try {
                     refGenome = new IndexedFastaSequenceFile(new File(argv[i+1]));
                 }catch(FileNotFoundException e){
-                    System.err.println("Reference genome file: " + argv[i+1] + " was not found");
+                    System.err.println("At " + new File(".").getAbsolutePath());
+                    System.err.println("   Reference genome file: " + argv[i+1] + " was not found");
                     System.exit(1);
                 }
             }
