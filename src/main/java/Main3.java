@@ -16,6 +16,7 @@ import htsjdk.samtools.util.SamLocusIterator;
 import htsjdk.samtools.util.AbstractLocusInfo;
 import htsjdk.samtools.SamReader;
 import htsjdk.samtools.SAMRecord;
+import htsjdk.samtools.SAMRecordIterator;
 import htsjdk.samtools.Cigar;
 import htsjdk.samtools.SamReaderFactory;
 import htsjdk.samtools.filter.SamRecordFilter;
@@ -27,10 +28,11 @@ import htsjdk.samtools.reference.IndexedFastaSequenceFile;
 import htsjdk.samtools.reference.ReferenceSequence;
 
 
-public class Main2 {
+public class Main3 {
     static IndexedFastaSequenceFile refGenome;
     static boolean debug = false; // 83520057
     static int unknown = 0;
+    static int READ_LENGTH = 151;
     private static char getRefBase(String chrom, int pos){
         ReferenceSequence seq = refGenome.getSubsequenceAt(chrom, pos, pos);
         return seq.getBaseString().charAt(0);
@@ -49,18 +51,20 @@ public class Main2 {
             unknown = u;
         }
     }
-    private static boolean isSecondaryOrSupplementary(SAMRecord r){
-        System.err.println("isSecondaryOrSupplementary()");
-        if(r.isSecondaryOrSupplementary()){
-            return true;
-        }
+    private static boolean hasClipping(SAMRecord r){
         Cigar cigar = r.getCigar();
         if(cigar.getFirstCigarElement().getOperator().isClipping() || cigar.getLastCigarElement().getOperator().isClipping()){
             System.err.println("READNAME: " + r.getReadName() + " true");
             return true;
         }
-        System.err.println("READNAME: " + r.getReadName() + " false");
         return false;
+    }
+    private static boolean isSecondaryOrSupplementary(SAMRecord r){
+        System.err.println("isSecondaryOrSupplementary()");
+        if(r.isSecondaryOrSupplementary()){
+            return true;
+        }
+        return hasClipping(r);
     }
     private static String getReadName(SAMRecord r){
       try {
@@ -74,6 +78,145 @@ public class Main2 {
       }
         return r.getReadName() + "_2";
     }
+   public static void analyseVCF(ArrayList<VCFEntry> vcf, String bamPath) throws IOException{
+        final SamReader reader = SamReaderFactory.makeDefault().open(new File(bamPath));
+
+        VCFEntry prev = null;
+        for(VCFEntry snp: vcf){
+            System.err.println("checking "+ snp.chrom + ":" + snp.pos);
+            String score = analyzeSNP(snp, reader);
+            snp.appendInfo(score);
+            System.out.println(snp.toString());
+        }
+    }
+    public static String analyzeSNP(VCFEntry snp, SamReader reader){
+        // prepare ovarlapping reads 
+        int snp_len = (snp.ref.length() > snp.alt.length())? snp.ref.length(): snp.alt.length();
+        // Scan wide and collect reads containing snp position
+        SAMRecordIterator it = reader.queryOverlapping(snp.chrom, snp.pos-READ_LENGTH, snp.pos +snp_len + READ_LENGTH);
+        HashMap<String, ExtendedSAMRecord> reads = new HashMap<>();
+        while(it.hasNext()){
+            SAMRecord read  = it.next();
+            if(read.getReadUnmappedFlag()){
+                continue;
+            }
+            ExtendedSAMRecord eread = new ExtendedSAMRecord(read);           
+            String suffix = read.getFirstOfPairFlag()? "_1": "_2";
+            if(eread.contains(snp.pos, snp_len)){ // check snp position including clipping 
+                reads.put(read.getReadName() + suffix, eread);
+            }
+        }
+        // scan alignment
+        IntervalList region = createWideRegionInterval(reader, snp);
+        SamLocusIterator locus = new SamLocusIterator(reader, region);
+        locus.setIncludeNonPfReads(true); //  no-filter
+        locus.setEmitUncoveredLoci(true); //
+        locus.setIncludeIndels(true);     // 
+        locus.setSamFilters(null);        //
+        while(locus.hasNext()){
+            SamLocusIterator.LocusInfo cur = (SamLocusIterator.LocusInfo)locus.next();
+            // AbstractLocusInfo cur = locus.next();
+            List<SamLocusIterator.RecordAndOffset> alignments = cur.getRecordAndOffsets();
+            for(SamLocusIterator.RecordAndOffset align: alignments){
+                SAMRecord rec = align.getRecord();
+                String name = rec.getReadName() + (rec.getFirstOfPairFlag()? "_1": "_2");
+                reads.get(name).init(cur.getPosition(), align.getReadBase());
+            }
+        }
+        for(ExtendedSAMRecord rec: reads.values()){ // prep clipping region
+            rec.init();
+        }
+        locus.close();
+
+        return "SCORE=DUMMY";
+    }
+    private static IntervalList createJustRegionInterval(SamReader reader, VCFEntry snp){
+        IntervalList list = new IntervalList(reader.getFileHeader());
+        int start = snp.pos;
+        int end = snp.pos+snp.alt.length();
+        
+        Interval interval = new Interval(snp.chrom, start, end);
+        list.add(interval);
+
+        return list;
+    }
+    private static IntervalList createWideRegionInterval(SamReader reader, VCFEntry snp){
+        IntervalList list = new IntervalList(reader.getFileHeader());
+        int start = snp.pos-READ_LENGTH;
+        int end = snp.pos+READ_LENGTH;
+        
+        Interval interval = new Interval(snp.chrom, start, end);
+        list.add(interval);
+
+        return list;
+    }
+    public static String join(String... list){
+        StringBuilder buf = new StringBuilder(list[0]);
+        for(int i = 1; i<list.length; i++){
+            buf.append(list[i]);
+        }
+        return buf.toString();
+    }
+    public static void main(String[] argv){
+        System.err.print("testing");
+        String vcfPath = null;
+        String bamPath = null;
+        for(int i = 0; i<argv.length-1; i++){
+            if(argv[i].equals("--vcf")){
+                vcfPath = argv[i+1];
+            }else if(argv[i].equals("--bam")){
+                bamPath = argv[i+1];
+            }else if(argv[i].equals("--ref")){
+                try {
+                    refGenome = new IndexedFastaSequenceFile(new File(argv[i+1]));
+                }catch(FileNotFoundException e){
+                    System.err.println("Reference genome file: " + argv[i+1] + " was not found");
+                    System.exit(1);
+                }
+            }
+        }
+        if(vcfPath == null){
+            System.err.println("No VCF file is given");
+            printUsage();
+            System.exit(1);
+        }
+        if(bamPath == null){
+            System.err.println("No BAM file is given");
+            printUsage();
+            System.exit(1);
+        }
+        if(refGenome == null){
+            System.err.println("No Reference genome file is given");
+            printUsage();
+            System.exit(1);
+        }
+        try {
+            ArrayList<VCFEntry> vcf = loadVCF(vcfPath);
+            analyseVCF(vcf, bamPath);
+        }catch(Exception e){
+            e.printStackTrace();
+        }
+    }
+    public static ArrayList<VCFEntry> loadVCF(String vcfPath) throws IOException{
+        ArrayList<VCFEntry> entries = new ArrayList<>();
+        BufferedReader br = new BufferedReader(new InputStreamReader(new GZIPInputStream(new FileInputStream(vcfPath))));
+        String raw = null;
+        while(null != (raw = br.readLine())){
+            if(raw.startsWith("#")){
+                continue;
+            }
+            VCFEntry ent = new VCFEntry(raw.split("\t"));
+            entries.add(ent);
+        }
+        br.close();
+        return entries;
+    }
+    public static final void printUsage(){
+        System.err.print("Usage:\n\t\t");
+        System.err.println("java -jar ChimeraBuster.jar --vcf [vcf file] --bam [bam file] --ref [ref genome fasta file]");
+    }
+}
+/*
     private static void classifyAlignment(List<SamLocusIterator.RecordAndOffset> src, String refBase, String altBase, HashMap<String, SamLocusIterator.RecordAndOffset> refs, HashMap<String, SamLocusIterator.RecordAndOffset> alts, int snpPos, int pos, HashSet<String> chimeras){
         int total = 0;
         unknown = 0;
@@ -169,7 +312,7 @@ public class Main2 {
             }
         }
         return result;
-    }*/
+    }
     // filer out ArtificialHaplotypeRG ReadGroup created by GATK
     /*
     private static List<SamLocusIterator.RecordAndOffset> filterAlignment(List<SamLocusIterator.RecordAndOffset> src){
@@ -184,7 +327,7 @@ public class Main2 {
             }
         }
         return result;
-    }*/
+    }
     private static String calcScore(HashMap<String, SamLocusIterator.RecordAndOffset> ref, HashMap<String, SamLocusIterator.RecordAndOffset> alt, ChimeraInfo info){
         int total = info.refs + info.alts + info.unknown;
         float alt_rate = ((float)info.alts)/total;
@@ -193,7 +336,7 @@ public class Main2 {
         result = join(result, ";StrictChimeraAlt=", String.valueOf(info.alt_and_chimera), "/", String.valueOf(info.alts+info.unknown), ";StrictChimeraAlt_ratio=", String.valueOf(((float)info.alt_and_chimera)/(info.alts+info.unknown)));
         return result;
     }
-    /*
+
     private static String calcScore(HashMap<String, SamLocusIterator.RecordAndOffset> ref, HashMap<String, SamLocusIterator.RecordAndOffset> alt){
         // filter uncommon reads: remove reads not covering both position
         int ref_count = ref.size();
@@ -215,18 +358,15 @@ public class Main2 {
         String result = join("SoftClips=", String.valueOf(alt_softclip_count), "/", String.valueOf(alt_count), ":", String.valueOf(rate_soft));
         result = join(result, ";HardClips=", String.valueOf(alt_hardclip_count), "/", String.valueOf(alt_count), ":", String.valueOf(rate_hard));
         return result;
-    }*/
-    public static String analyzeSNP(VCFEntry snp, SamReader reader1, SamReader reader2){
+    }
+    public static String analyzeSNP(VCFEntry snp, SamReader reader){
         // classify ref reads and alt reads
         HashMap<String, SamLocusIterator.RecordAndOffset> ref = new HashMap<String, SamLocusIterator.RecordAndOffset>();
         HashMap<String, SamLocusIterator.RecordAndOffset> alt = new HashMap<String, SamLocusIterator.RecordAndOffset>();
         HashSet<String> chimeras = new HashSet<String>();
 
-        IntervalList region = createWideRegionInterval(reader1, snp);
-        SamLocusIterator locus = new SamLocusIterator(reader1, region);
-        // final List<SamRecordFilter> filters = java.util.Arrays.asList(new SecondaryAlignmentFilter());
-        // final List<SamRecordFilter> filters = java.util.Arrays.asList(new SecondaryAlignmentFilter(), new DuplicateReadFilter());
-        // locus.setSamFilters(filters);
+        IntervalList region = createWideRegionInterval(reader, snp);
+        SamLocusIterator locus = new SamLocusIterator(reader, region);
         locus.setIncludeNonPfReads(true);
         locus.setEmitUncoveredLoci(true);
         locus.setIncludeIndels(true);
@@ -240,10 +380,6 @@ public class Main2 {
                     debug = true;
                 }
                 classifyAlignment(alignments, snp.ref, snp.alt, (HashMap<String, SamLocusIterator.RecordAndOffset>) ref, (HashMap<String, SamLocusIterator.RecordAndOffset>) alt, snp.pos, cur.getPosition(), chimeras);
-                /*
-                if(snp.chrom.equals("chr5") && debug && snp.pos > 83520062){
-                    System.exit(0);
-                }*/
                 debug = false;
             }
         }
@@ -263,29 +399,7 @@ public class Main2 {
         locus.close();
         return calcScore(ref, alt, info);
     }
-    public static void analyseVCF(ArrayList<VCFEntry> vcf, String bamPath) throws IOException{
-        final SamReader reader1 = SamReaderFactory.makeDefault().open(new File(bamPath));
-        final SamReader reader2 = SamReaderFactory.makeDefault().open(new File(bamPath));
-
-        VCFEntry prev = null;
-        for(VCFEntry snp: vcf){
-            System.err.println("checking "+ snp.chrom + ":" + snp.pos);
-            String score = analyzeSNP(snp, reader1, reader2);
-            snp.appendInfo(score);
-            System.out.println(snp.toString());
-        }
-    }
-    private static IntervalList createWideRegionInterval(SamReader reader, VCFEntry snp){
-        IntervalList list = new IntervalList(reader.getFileHeader());
-        int start = snp.pos-5;
-        int end = snp.pos+5;
-        
-        Interval interval = new Interval(snp.chrom, start, end);
-        list.add(interval);
-
-        return list;
-    }
-     private static IntervalList createTargetRegionInterval(SamReader reader, VCFEntry snp){
+    private static IntervalList createTargetRegionInterval(SamReader reader, VCFEntry snp){
         IntervalList list = new IntervalList(reader.getFileHeader());
         int start = snp.pos+1;
         int end = snp.pos+1;
@@ -295,69 +409,5 @@ public class Main2 {
 
         return list;
     }
-    public static String join(String... list){
-        StringBuilder buf = new StringBuilder(list[0]);
-        for(int i = 1; i<list.length; i++){
-            buf.append(list[i]);
-        }
-        return buf.toString();
-    }
-    public static void main(String[] argv){
-        System.err.print("testing");
-        String vcfPath = null;
-        String bamPath = null;
-        for(int i = 0; i<argv.length-1; i++){
-            if(argv[i].equals("--vcf")){
-                vcfPath = argv[i+1];
-            }else if(argv[i].equals("--bam")){
-                bamPath = argv[i+1];
-            }else if(argv[i].equals("--ref")){
-                try {
-                    refGenome = new IndexedFastaSequenceFile(new File(argv[i+1]));
-                }catch(FileNotFoundException e){
-                    System.err.println("Reference genome file: " + argv[i+1] + " was not found");
-                    System.exit(1);
-                }
-            }
-        }
-        if(vcfPath == null){
-            System.err.println("No VCF file is given");
-            printUsage();
-            System.exit(1);
-        }
-        if(bamPath == null){
-            System.err.println("No BAM file is given");
-            printUsage();
-            System.exit(1);
-        }
-        if(refGenome == null){
-            System.err.println("No Reference genome file is given");
-            printUsage();
-            System.exit(1);
-        }
-        try {
-            ArrayList<VCFEntry> vcf = loadVCF(vcfPath);
-            analyseVCF(vcf, bamPath);
-        }catch(Exception e){
-            e.printStackTrace();
-        }
-    }
-    public static ArrayList<VCFEntry> loadVCF(String vcfPath) throws IOException{
-        ArrayList<VCFEntry> entries = new ArrayList<>();
-        BufferedReader br = new BufferedReader(new InputStreamReader(new GZIPInputStream(new FileInputStream(vcfPath))));
-        String raw = null;
-        while(null != (raw = br.readLine())){
-            if(raw.startsWith("#")){
-                continue;
-            }
-            VCFEntry ent = new VCFEntry(raw.split("\t"));
-            entries.add(ent);
-        }
-        br.close();
-        return entries;
-    }
-    public static final void printUsage(){
-        System.err.print("Usage:\n\t\t");
-        System.err.println("java -jar ChimeraBuster.jar --vcf [vcf file] --bam [bam file] --ref [ref genome fasta file]");
-    }
-}
+ 
+ */
