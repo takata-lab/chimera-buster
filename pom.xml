@@ -33,7 +33,7 @@
                 </descriptorRefs>
                 <archive>
                     <manifest>
-                        <mainClass>Main</mainClass>
+                        <mainClass>Main3</mainClass>
                     </manifest>
                 </archive>
             </configuration>
