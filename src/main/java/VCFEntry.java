@@ -43,6 +43,18 @@ public class VCFEntry {
     public void appendInfo(String app){
         rawInfo = rawInfo + ";" + app;
     }
+    public String getChromosome(){
+        return chrom;
+    }
+    public int getPosition(){
+        return this.pos;
+    }
+    public String getRefAllele(){
+        return this.ref;
+    }
+    public String getAltAllele(){
+        return this.alt;
+    }
     public String toString(){
         StringBuilder buf = new StringBuilder();
         buf.append(chrom);

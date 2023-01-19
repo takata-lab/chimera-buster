@@ -54,18 +54,19 @@ public class Main3 {
     private static boolean hasClipping(SAMRecord r){
         Cigar cigar = r.getCigar();
         if(cigar.getFirstCigarElement().getOperator().isClipping() || cigar.getLastCigarElement().getOperator().isClipping()){
-            System.err.println("READNAME: " + r.getReadName() + " true");
+            // System.err.println("READNAME: " + r.getReadName() + " true");
             return true;
         }
         return false;
     }
+    /*
     private static boolean isSecondaryOrSupplementary(SAMRecord r){
         System.err.println("isSecondaryOrSupplementary()");
         if(r.isSecondaryOrSupplementary()){
             return true;
         }
         return hasClipping(r);
-    }
+    }*/
     private static String getReadName(SAMRecord r){
       try {
         boolean isFirst = r.getFirstOfPairFlag();
@@ -79,56 +80,125 @@ public class Main3 {
         return r.getReadName() + "_2";
     }
    public static void analyseVCF(ArrayList<VCFEntry> vcf, String bamPath) throws IOException{
-        final SamReader reader = SamReaderFactory.makeDefault().open(new File(bamPath));
-
         VCFEntry prev = null;
         for(VCFEntry snp: vcf){
             System.err.println("checking "+ snp.chrom + ":" + snp.pos);
-            String score = analyzeSNP(snp, reader);
+            String score = analyzeSNP(snp, bamPath);
             snp.appendInfo(score);
             System.out.println(snp.toString());
         }
     }
-    public static String analyzeSNP(VCFEntry snp, SamReader reader){
+    public static String analyzeSNP(VCFEntry snp, String bamPath) throws IOException{
+        final SamReader reader1 = SamReaderFactory.makeDefault().open(new File(bamPath));
+        final SamReader reader2 = SamReaderFactory.makeDefault().open(new File(bamPath));
         // prepare ovarlapping reads 
         int snp_len = (snp.ref.length() > snp.alt.length())? snp.ref.length(): snp.alt.length();
         // Scan wide and collect reads containing snp position
-        SAMRecordIterator it = reader.queryOverlapping(snp.chrom, snp.pos-READ_LENGTH, snp.pos +snp_len + READ_LENGTH);
         HashMap<String, ExtendedSAMRecord> reads = new HashMap<>();
-        while(it.hasNext()){
-            SAMRecord read  = it.next();
-            if(read.getReadUnmappedFlag()){
-                continue;
-            }
-            ExtendedSAMRecord eread = new ExtendedSAMRecord(read);           
-            String suffix = read.getFirstOfPairFlag()? "_1": "_2";
-            if(eread.contains(snp.pos, snp_len)){ // check snp position including clipping 
-                reads.put(read.getReadName() + suffix, eread);
+        try (SAMRecordIterator it = reader1.queryOverlapping(snp.chrom, snp.pos-READ_LENGTH, snp.pos +snp_len + READ_LENGTH)){
+            while(it.hasNext()){
+                SAMRecord read  = it.next();
+                if(read.getReadUnmappedFlag()){
+                    continue;
+                }
+                ExtendedSAMRecord eread = new ExtendedSAMRecord(read);           
+                String suffix = read.getFirstOfPairFlag()? "_1": "_2";
+                if(eread.contains(snp.pos, snp_len)){ // check snp position including clipping 
+                    reads.put(read.getReadName() + suffix, eread);
+                }
             }
         }
         // scan alignment
-        IntervalList region = createWideRegionInterval(reader, snp);
-        SamLocusIterator locus = new SamLocusIterator(reader, region);
-        locus.setIncludeNonPfReads(true); //  no-filter
-        locus.setEmitUncoveredLoci(true); //
-        locus.setIncludeIndels(true);     // 
-        locus.setSamFilters(null);        //
-        while(locus.hasNext()){
-            SamLocusIterator.LocusInfo cur = (SamLocusIterator.LocusInfo)locus.next();
-            // AbstractLocusInfo cur = locus.next();
-            List<SamLocusIterator.RecordAndOffset> alignments = cur.getRecordAndOffsets();
-            for(SamLocusIterator.RecordAndOffset align: alignments){
-                SAMRecord rec = align.getRecord();
-                String name = rec.getReadName() + (rec.getFirstOfPairFlag()? "_1": "_2");
-                reads.get(name).init(cur.getPosition(), align.getReadBase());
+        IntervalList region = createWideRegionInterval(reader1, snp);
+        try (SamLocusIterator locus = new SamLocusIterator(reader2, region)){
+            locus.setIncludeNonPfReads(true); //  no-filter
+            locus.setEmitUncoveredLoci(true); //
+            locus.setIncludeIndels(true);     // 
+            locus.setSamFilters(null);        //
+            // setup multiple alignment
+            while(locus.hasNext()) {
+                SamLocusIterator.LocusInfo cur = (SamLocusIterator.LocusInfo)locus.next();
+                // AbstractLocusInfo cur = locus.next();
+                List<SamLocusIterator.RecordAndOffset> alignments = cur.getRecordAndOffsets();
+                for(SamLocusIterator.RecordAndOffset align: alignments){
+                    SAMRecord rec = align.getRecord();
+                    String name = rec.getReadName() + (rec.getFirstOfPairFlag()? "_1": "_2");
+                    byte[] base = new byte[1];
+                    base[0] = align.getReadBase();
+                    if(!reads.containsKey(name)){ 
+                        ExtendedSAMRecord eread = new ExtendedSAMRecord(rec);
+                        reads.put(name, eread);
+                    }
+                    if(!reads.get(name).hasClip()){ // clipped-reads have more priority
+                        reads.get(name).init(cur.getPosition(), new String(base));
+                    }
+                }
+                List<SamLocusIterator.RecordAndOffset> deleted = cur.getDeletedInRecord();
+                for(SamLocusIterator.RecordAndOffset align: deleted){
+                    SAMRecord rec = align.getRecord();
+                    String name = rec.getReadName() + (rec.getFirstOfPairFlag()? "_1": "_2");
+                    String bases = get_bases(rec, align.getOffset(), align.getLength());
+                    if(!reads.containsKey(name)){
+                        ExtendedSAMRecord eread = new ExtendedSAMRecord(rec);
+                        reads.put(name, eread);
+                    }
+                    if(!reads.get(name).hasClip()){
+                        reads.get(name).init(cur.getPosition(), bases);
+                    }
+                }
+                List<SamLocusIterator.RecordAndOffset> inserted = cur.getInsertedInRecord();
+                for(SamLocusIterator.RecordAndOffset align: inserted){
+                    SAMRecord rec = align.getRecord();
+                    String name = rec.getReadName() + (rec.getFirstOfPairFlag()? "_1": "_2");
+                    String bases = get_bases(rec, align.getOffset(), align.getLength());
+                    if(!reads.containsKey(name)){
+                        ExtendedSAMRecord eread = new ExtendedSAMRecord(rec);
+                        reads.put(name, eread);
+                    }
+                    if(!reads.get(name).hasClip()){
+                        reads.get(name).init(cur.getPosition(), bases);
+                    }
+                }
             }
         }
-        for(ExtendedSAMRecord rec: reads.values()){ // prep clipping region
-            rec.init();
+        reader2.close();
+        reader1.close();
+        
+        int alt_count = 0;
+        int alt_and_chimera = 0;
+        int ref_count = 0;
+        int ref_and_chimea = 0;
+        for(ExtendedSAMRecord rec: reads.values()){
+            int pos = snp.getPosition();
+            char refAllele = getRefBase(snp.getChromosome(), pos);
+            if(rec.hasBaseAt(pos)){
+                String allele = rec.getBaseAt(pos);
+                // System.out.println(refAllele + "\t" + allele + "\t" + rec.getReadName() + "\t" + rec.hasClip());
+                if(snp.getRefAllele().equals(allele)){
+                    ref_count++;
+                    if(rec.hasClip()){
+                        ref_and_chimea++;
+                    }
+                }else if(snp.getAltAllele().equals(allele)){
+                    alt_count++;
+                    if(rec.hasClip()){
+                        alt_and_chimera++;
+                    }
+                }
+            }
         }
-        locus.close();
 
-        return "SCORE=DUMMY";
+        return "Alt=" + alt_count + "/" + (alt_count+ref_count) + ";"
+            + "Alt_ratio=" + divide(alt_count, alt_count+ref_count) + ";"
+            + "ChimeraAlt=" + alt_and_chimera + "/" + alt_count + ";"
+            + "ChimeraAlt_ratio=" + divide(alt_and_chimera, alt_count); 
+    }
+    private static float divide(int a, int b){
+        return (float)a/(float)b;
+    }
+    private static String get_bases(SAMRecord rec, int offset, int len){
+        byte[] bases = rec.getReadBases();
+        return new String(bases, offset, len);
     }
     private static IntervalList createJustRegionInterval(SamReader reader, VCFEntry snp){
         IntervalList list = new IntervalList(reader.getFileHeader());
@@ -142,8 +212,8 @@ public class Main3 {
     }
     private static IntervalList createWideRegionInterval(SamReader reader, VCFEntry snp){
         IntervalList list = new IntervalList(reader.getFileHeader());
-        int start = snp.pos-READ_LENGTH;
-        int end = snp.pos+READ_LENGTH;
+        int start = snp.pos-10;
+        int end = snp.pos+10;
         
         Interval interval = new Interval(snp.chrom, start, end);
         list.add(interval);
