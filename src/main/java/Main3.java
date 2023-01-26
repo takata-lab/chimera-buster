@@ -101,10 +101,14 @@ public class Main3 {
                 if(read.getReadUnmappedFlag()){
                     continue;
                 }
-                ExtendedSAMRecord eread = new ExtendedSAMRecord(read);           
-                String suffix = read.getFirstOfPairFlag()? "_1": "_2";
-                if(eread.contains(snp.pos, snp_len)){ // check snp position including clipping 
-                    reads.put(read.getReadName() + suffix, eread);
+                ExtendedSAMRecord eread = null;
+                try {
+                    eread = new ExtendedSAMRecord(read);           
+                    String suffix = read.getFirstOfPairFlag()? "_1": "_2";
+                    if(eread.contains(snp.pos, snp_len)){ // check snp position including clipping 
+                        reads.put(read.getReadName() + suffix, eread);
+                    }
+                }catch(RuntimeException hard_clip_ex){
                 }
             }
         }
@@ -126,8 +130,13 @@ public class Main3 {
                     byte[] base = new byte[1];
                     base[0] = align.getReadBase();
                     if(!reads.containsKey(name)){ 
-                        ExtendedSAMRecord eread = new ExtendedSAMRecord(rec);
-                        reads.put(name, eread);
+                        try {
+                            ExtendedSAMRecord eread = null;
+                            eread = new ExtendedSAMRecord(rec);
+                            reads.put(name, eread);
+                        }catch(RuntimeException e){
+                            continue;
+                        }
                     }
                     if(!reads.get(name).hasClip()){ // clipped-reads have more priority
                         reads.get(name).init(cur.getPosition(), new String(base));
@@ -139,8 +148,13 @@ public class Main3 {
                     String name = rec.getReadName() + (rec.getFirstOfPairFlag()? "_1": "_2");
                     String bases = get_bases(rec, align.getOffset(), align.getLength());
                     if(!reads.containsKey(name)){
-                        ExtendedSAMRecord eread = new ExtendedSAMRecord(rec);
-                        reads.put(name, eread);
+                        ExtendedSAMRecord eread = null;
+                        try {
+                            eread = new ExtendedSAMRecord(rec);
+                            reads.put(name, eread);
+                        }catch(Exception e){
+                            continue;
+                        }
                     }
                     if(!reads.get(name).hasClip()){
                         reads.get(name).init(cur.getPosition(), bases);
@@ -152,8 +166,13 @@ public class Main3 {
                     String name = rec.getReadName() + (rec.getFirstOfPairFlag()? "_1": "_2");
                     String bases = get_bases(rec, align.getOffset(), align.getLength());
                     if(!reads.containsKey(name)){
-                        ExtendedSAMRecord eread = new ExtendedSAMRecord(rec);
-                        reads.put(name, eread);
+                        ExtendedSAMRecord eread = null;
+                        try {
+                            eread = new ExtendedSAMRecord(rec);
+                            reads.put(name, eread);
+                        }catch(Exception e){
+                            continue;
+                        }
                     }
                     if(!reads.get(name).hasClip()){
                         reads.get(name).init(cur.getPosition(), bases);

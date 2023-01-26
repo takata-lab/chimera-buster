@@ -18,6 +18,10 @@ public class ExtendedSAMRecord {
         this.end = r.getUnclippedEnd();
 
         Cigar cigar = r.getCigar();
+        if(cigar.getFirstCigarElement().getOperator() == CigarOperator.HARD_CLIP
+            || cigar.getLastCigarElement().getOperator() == CigarOperator.HARD_CLIP){
+            throw new RuntimeException("Hard clip");
+        }
         // leading clip
         if(cigar.getFirstCigarElement().getOperator().isClipping()){
             byte[] bases = this.rec.getReadBases();
@@ -29,6 +33,9 @@ public class ExtendedSAMRecord {
         if(cigar.getLastCigarElement().getOperator().isClipping()){
             byte[] bases = this.rec.getReadBases();
             int clip_len = cigar.getFirstCigarElement().getLength();
+            System.err.println(this.rec.getReadName());
+            System.err.println("bases.length: " + bases.length);
+            System.err.println("clip_len : " + clip_len);
             trailingSoftClipBases = java.util.Arrays.copyOfRange(bases, bases.length - clip_len, bases.length);
             hasClip = true;
         }
