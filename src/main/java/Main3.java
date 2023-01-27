@@ -187,21 +187,24 @@ public class Main3 {
         int alt_and_chimera = 0;
         int ref_count = 0;
         int ref_and_chimea = 0;
+        int alt_allele_length = snp.getAltAllele().length();
+        int ref_allele_length = snp.getRefAllele().length();
         for(ExtendedSAMRecord rec: reads.values()){
             int pos = snp.getPosition();
-            char refAllele = getRefBase(snp.getChromosome(), pos);
-            if(rec.hasBaseAt(pos)){
-                String allele = rec.getBaseAt(pos);
+            // char refAllele = getRefBase(snp.getChromosome(), pos);
+            if(rec.hasBaseAt(pos + alt_allele_length)){
+                String assumedRefAllele = makeAllele(rec, pos, ref_allele_length);
+                String assumedAltAllele = makeAllele(rec, pos, alt_allele_length);
                 // System.out.println(refAllele + "\t" + allele + "\t" + rec.getReadName() + "\t" + rec.hasClip());
-                if(snp.getRefAllele().equals(allele)){
-                    ref_count++;
-                    if(rec.hasClip()){
-                        ref_and_chimea++;
-                    }
-                }else if(snp.getAltAllele().equals(allele)){
+                if(assumedAltAllele != null && snp.getAltAllele().equals(assumedAltAllele)){
                     alt_count++;
                     if(rec.hasClip()){
                         alt_and_chimera++;
+                    }
+                }else if(assumedRefAllele != null && snp.getRefAllele().equals(assumedRefAllele)){
+                    ref_count++;
+                    if(rec.hasClip()){
+                        ref_and_chimea++;
                     }
                 }
             }
@@ -211,6 +214,17 @@ public class Main3 {
             + "Alt_ratio=" + divide(alt_count, alt_count+ref_count) + ";"
             + "ChimeraAlt=" + alt_and_chimera + "/" + alt_count + ";"
             + "ChimeraAlt_ratio=" + divide(alt_and_chimera, alt_count); 
+    }
+    private static String makeAllele(ExtendedSAMRecord rec, int pos, int len){
+        try {
+            StringBuilder allele_buf = new StringBuilder();
+            for(int i = pos; i<pos + len; i++){
+                allele_buf.append(rec.getBaseAt(i));
+            }
+            return allele_buf.toString();
+        }catch(RuntimeException e){
+            return null;
+        }
     }
     private static float divide(int a, int b){
         return (float)a/(float)b;
