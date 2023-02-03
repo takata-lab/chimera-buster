@@ -1,5 +1,5 @@
 HTSJDK=/data10/system/src/IGV_Linux_2.12.3/lib/htsjdk-2.24.1.jar
-JAVA_HOME=/usr/lib/jvm/jdk-17.0.2
+JAVA_HOME=/usr/java/jdk-17.0.2
 
 
 package:
@@ -15,7 +15,7 @@ fulltest:
 install:
 	-mkdir /usr/local/lib/chimera-buster
 	cp target/chimera_buster-1.0-SNAPSHOT-jar-with-dependencies.jar /usr/local/lib/chimera-buster
-	echo "java -jar /usr/local/lib/chimera-buster/chimera_buster-1.0-SNAPSHOT-jar-with-dependencies.jar $$@" > /usr/local/bin/chimera-buster
+	echo 'java -jar /usr/local/lib/chimera-buster/chimera_buster-1.0-SNAPSHOT-jar-with-dependencies.jar $$@' > /usr/local/bin/chimera-buster2
 	chmod 755 /usr/local/bin/chimera-buster
 
 test:
@@ -24,3 +24,4 @@ test:
 	# @echo "---"
 	# java -cp target/chimera_buster-1.0-SNAPSHOT-jar-with-dependencies.jar Main --vcf ../test_data/mini.vcf.gz --bam ../test_data/ML-BA001.Maryland_DES_wave1.hg38.BQSR.merge.markdup.tagfix.mutect.GENCODEv32_RefSeq.slop100.PASS.slop300.bamout.bam \
 #		--ref /disk1/2020_digenome_seek_july/Homo_sapiens.GRCh38.dna_sm.primary_assembly_fix.fa
+
