@@ -29,3 +29,14 @@ export PATH=/usr/local/bin:${JAVA_HOME}/bin:$PATH
 make
 sudo make install
 ```
+
+## Usage
+
+```
+chimera-buster --vcf [vcf file] --bam [bam file] --ref [ref genome fasta file]
+```
+or
+```
+java -jar /path/to/chimera_buster-1.0-SNAPSHOT-jar-with-dependencies.jar --vcf [vcf file] --bam [bam file] --ref [ref genome fasta file]
+```
+
