@@ -1,13 +1,10 @@
 # chimera-buster
 chimeric read buster
 
-We would like to eliminate false positive SNPs from our 
-somatic mutations analysis.
+We aim to eliminate false positive single nucleotide polymorphisms (SNPs) from our analysis of somatic mutations.
 
-Some of enzymatic fragmentation can bears some fraction of 
-artificial short read during its process.
-This program can detect such artifact and caluculate some stats
-for each SNPs.
+Unfortunately, enzymatic fragmentation can generate artificial short reads during its shearing process.
+This program can detect these artifacts and compute corresponding statistics for each SNP.
 
 * Installation (on CentOS or RHEL):
 
