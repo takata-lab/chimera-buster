@@ -8,7 +8,9 @@ enzymatic fragmentation for genome DNA fragmentation has become more widespread.
 This method can be more cost-effective and time-efficient compared to other methods of DNA fragmentation,
 such as sonication.
 
-Unfortunately, enzymatic fragmentation can generate artificial short reads during its shearing process.
+Unfortunately, during the enzymatic fragmentation process, a small number of artificial
+short reads can be generated, which can be significant in terms of their impact.
+
 This program can detect these artifacts and compute corresponding statistics for each SNP.
 
 ## Installation (on CentOS or RHEL):
