@@ -1,5 +1,6 @@
 import java.io.File;
 import java.io.BufferedReader;
+import java.io.FileReader;
 import java.io.InputStreamReader;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -31,6 +32,7 @@ import htsjdk.samtools.reference.ReferenceSequence;
 public class Main3 {
     static IndexedFastaSequenceFile refGenome;
     static boolean debug = false; // 83520057
+    static ArrayList<String> header = new ArrayList<>();
     static int unknown = 0;
     static int READ_LENGTH = 151;
     private static char getRefBase(String chrom, int pos){
@@ -81,6 +83,12 @@ public class Main3 {
     }
    public static void analyseVCF(ArrayList<VCFEntry> vcf, String bamPath) throws IOException{
         VCFEntry prev = null;
+        for(String line: header){
+            if(line.startsWith("#CHROM")){
+                printCustomHeader();
+            }
+            System.out.println(line);
+        }
         for(VCFEntry snp: vcf){
             System.err.println("checking "+ snp.chrom + ":" + snp.pos);
             String score = analyzeSNP(snp, bamPath);
@@ -302,10 +310,16 @@ public class Main3 {
     }
     public static ArrayList<VCFEntry> loadVCF(String vcfPath) throws IOException{
         ArrayList<VCFEntry> entries = new ArrayList<>();
-        BufferedReader br = new BufferedReader(new InputStreamReader(new GZIPInputStream(new FileInputStream(vcfPath))));
+        BufferedReader br = null;
+        if(vcfPath.endsWith("gz")){
+            br = new BufferedReader(new InputStreamReader(new GZIPInputStream(new FileInputStream(vcfPath))));
+        }else {
+            br = new BufferedReader(new FileReader(vcfPath));
+        }
         String raw = null;
         while(null != (raw = br.readLine())){
             if(raw.startsWith("#")){
+                header.add(raw);
                 continue;
             }
             VCFEntry ent = new VCFEntry(raw.split("\t"));
@@ -313,6 +327,13 @@ public class Main3 {
         }
         br.close();
         return entries;
+    }
+    public static final void printCustomHeader(){
+        System.out.println("##INFO=<ID=Alt,Number=2,Type=Integer,Description=\"Alt carring read count in format 'Alt=A/B' where A is alt read count and B is total read count\">");
+        System.out.println("##INFO=<ID=Alt_ratio,Number=1,Type=Float,Description=\"Alt read ratio in format 'Alt_ratio=X' where X is the ratio of alt carring read count to total read count at the point(i.e. depth)\">");
+        System.out.println("##INFO=<ID=ChimeraAlt,Number=2,Type=Integer,Description=\"ChimeraAlt read count in format 'ChimeraAlt=A/B' where A is chmeric read count and B is total alt carring read count\">");
+        System.out.println("##INFO=<ID=ChimeraAlt_ratio,Number=1,Type=Float,Description=\"ChimeraAlt read ratio in format 'ChimeraAlt_ratio=X' where X is the ratio of chimeric read count to total alt carring read count\">");
+
     }
     public static final void printUsage(){
         System.err.print("Usage:\n\t\t");
