@@ -337,7 +337,9 @@ public class Main3 {
     }
     public static final void printUsage(){
         System.err.print("Usage:\n\t\t");
-        System.err.println("java -jar ChimeraBuster.jar --vcf [vcf file] --bam [bam file] --ref [ref genome fasta file]");
+        System.err.println("chimera-buster --vcf [vcf file] --bam [bam file] --ref [ref genome fasta file]");
+        System.err.println("  or ");
+        System.err.println("java -jar /path/to/chimera_buster-1.0-SNAPSHOT-jar-with-dependencies.jar --vcf [vcf file] --bam [bam file] --ref [ref genome fasta file]");
     }
 }
 /*
